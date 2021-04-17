@@ -162,10 +162,10 @@ def task_from_relay(x, target, op_name):
     return tasks[0]
 
 
-def conv2d_task(batch_size, in_channels, h, w, out_channels, kernel, padding, strides, target):
+def conv2d_task(batch_size, in_channels, h, w, out_channels, kernel, padding, strides, groups, target):
     x = relay.var('input', shape=(batch_size, in_channels, h, w))
-    w = relay.var('w', shape=(out_channels, in_channels, kernel[0], kernel[1]))
-    x = relay.nn.conv2d(x, w, padding=padding, strides=strides)
+    w = relay.var('w', shape=(out_channels, in_channels//groups, kernel[0], kernel[1]))
+    x = relay.nn.conv2d(x, w, padding=padding, strides=strides, groups=groups)
     task = task_from_relay(x, target, "nn.conv2d")
     return task
 
@@ -180,9 +180,9 @@ def dense_task(batch_size, in_channels, out_channels, target):
 
 def collect_command():
     if args.task_type == 'conv2d':
-        bs, ic, h, w, oc, kx, ky, px, py, sx, sy = [int(v) for v in args.args.split('-')]
+        bs, ic, h, w, oc, kx, ky, px, py, sx, sy, g = [int(v) for v in args.args.split('-')]
         task = conv2d_task(batch_size=bs, in_channels=ic, h=h, w=w,
-                           out_channels=oc, kernel=(kx, ky), padding=(px, py), strides=(sx, sy),
+                           out_channels=oc, kernel=(kx, ky), padding=(px, py), strides=(sx, sy), groups=g,
                            target=args.target)
     elif args.task_type == 'dense':
         bs, ic, oc = [int(v) for v in args.args.split('-')]
