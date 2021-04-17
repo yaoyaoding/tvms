@@ -2,7 +2,7 @@ import numpy as np
 from typing import Dict, List
 from tvm import autotvm
 from tvm import topi, te, relay
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict, namedtuple
 from tvm.autotvm.task.space import SplitEntity, ConfigEntity, ReorderEntity, OtherOptionEntity, AnnotateEntity
 import statistics
 from pprint import pprint
@@ -10,10 +10,13 @@ import tvm
 import argparse
 
 parser = argparse.ArgumentParser()
+parser.add_argument('-command', type=str, choices=['collect', 'analyze'], default='analyze')
 parser.add_argument('-task_type', type=str, choices=['conv2d', 'dense'], default='dense')
 parser.add_argument('-args', type=str, default='1-8-8')
 parser.add_argument('-target', type=str, choices=['llvm', 'cuda'], default='llvm')
 parser.add_argument('-n_trial', type=int, default=1000)
+parser.add_argument('-log_file', type=str, default='')
+
 args = parser.parse_args()
 
 
@@ -71,12 +74,13 @@ def analyze_running_data(log_file):
     profiles = []
     for i, record in enumerate(autotvm.record.load_from_file(log_file)):
         measure_input, measure_result = record
+        assert isinstance(measure_input, autotvm.measure.MeasureInput)
+        assert isinstance(measure_result, autotvm.measure.MeasureResult)
+        if measure_result.error_no != 0:
+            continue
         target, task, config = measure_input
-        selected_results = sorted(measure_result.costs)[5:5+15]
-        if len(selected_results) == 0:
-            costs = -1
-        else:
-            costs = sum(selected_results)/len(selected_results)
+        # selected_results = sorted(measure_result.costs)[5:5+15]
+        costs = statistics.mean(measure_result.costs)
         config = config._entity_map
         cfg = OrderedDict()
         for name, entity in config.items():
@@ -112,7 +116,8 @@ def sensitivity(profiles):
     for profile in profiles:
         cfg, latency = profile
         sch2latency[tuple(tuplize(v) for v in cfg.values())] = latency
-    min_latency = min(l for _, l in profiles)
+    latencies = [l for _, l in profiles]
+    min_latency = min(latencies)
 
     # classifiy profiles into collections
     n = len(subspace_names)
@@ -129,7 +134,7 @@ def sensitivity(profiles):
     for i in range(n):
         varanences = []
         for msch, latencies in collections[i].items():
-            varanences.append(statistics.pstdev(latencies) / min_latency)
+            varanences.append(statistics.pstdev(latencies) / min_latency * 100)
         sensitivities.append(statistics.mean(varanences))
     return {name: s for name, s in zip(subspace_names, sensitivities)}
 
@@ -173,28 +178,34 @@ def dense_task(batch_size, in_channels, out_channels, target):
     return task
 
 
-def get_task():
+def collect_command():
     if args.task_type == 'conv2d':
         bs, ic, h, w, oc, kx, ky, px, py, sx, sy = [int(v) for v in args.args.split('-')]
-        return conv2d_task(batch_size=bs, in_channels=ic, h=h, w=w,
+        task = conv2d_task(batch_size=bs, in_channels=ic, h=h, w=w,
                            out_channels=oc, kernel=(kx, ky), padding=(px, py), strides=(sx, sy),
                            target=args.target)
     elif args.task_type == 'dense':
         bs, ic, oc = [int(v) for v in args.args.split('-')]
-        return dense_task(batch_size=bs, in_channels=ic, out_channels=oc, target=args.target)
+        task = dense_task(batch_size=bs, in_channels=ic, out_channels=oc, target=args.target)
     else:
         raise ValueError("")
-
-
-def main():
-    task = get_task()
-    log_file = f'{task.name}-{args.args}-{args.target}.log'
+    log_file = args.log_file if len(args.log_file) > 0 else f'{args.task_type}-{args.args}-{args.target}.log'
     collect_running_data(task, tuner_name='random', log_file=log_file, n_trial=args.n_trial)
+
+
+def analyze_command():
+    log_file = args.log_file
     profiles = analyze_running_data(log_file)
-    # print(profiles)
     results = sensitivity(profiles)
     pprint(results)
 
 
 if __name__ == '__main__':
-    main()
+    if args.command == 'collect':
+        collect_command()
+    elif args.command == 'analyze':
+        # args.log_file = 'conv2d_nchw.cuda-8-64-32-32-64-3-3-1-1-1-1-cuda.log'
+        args.log_file = 'dense_small_batch.cuda-1-512-512-cuda.log'
+        analyze_command()
+    else:
+        raise ValueError("")
