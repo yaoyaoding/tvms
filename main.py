@@ -124,30 +124,38 @@ def sensitivity(profiles):
     return {name: s for name, s in zip(subspace_names, sensitivities)}
 
 
-def workload():
-    x = relay.var('input', shape=(1, 3, 224, 224))
-    w = relay.var('w', shape=(64, 3, 3, 3))
-    x = relay.nn.conv2d(x, w, padding=(1, 1))
+def conv2d_task(batch_size, in_channels, h, w, out_channels, kernel, padding, strides, target):
+    x = relay.var('input', shape=(batch_size, in_channels, h, w))
+    w = relay.var('w', shape=(out_channels, in_channels, kernel[0], kernel[1]))
+    x = relay.nn.conv2d(x, w, padding=padding, strides=strides)
     f = relay.Function(relay.analysis.free_vars(x), x)
     mod = tvm.IRModule.from_expr(f)
     mod = relay.transform.InferType()(mod)
     shape_dict = {v.name_hint: v.checked_type for v in mod["main"].params}
     params = {}
+    if target == 'llvm':
+        ctx = tvm.cpu()
+    elif target == 'cuda':
+        ctx = tvm.gpu()
+    else:
+        raise ValueError("")
     for k, v in shape_dict.items():
-        if k == "data":
+        if k == "input":
             continue
         init_value = np.zeros(v.concrete_shape).astype(v.dtype)
-        params[k] = tvm.nd.array(init_value, ctx=tvm.cpu(0))
+        params[k] = tvm.nd.array(init_value, ctx=ctx)
     tasks = autotvm.task.extract_from_program(
-        mod["main"], target='llvm', params=params, ops=(relay.op.get("nn.conv2d"),)
+        mod["main"], target=target, params=params, ops=(relay.op.get("nn.conv2d"),)
     )
-    return tasks[0]
+    return tasks[0], f'{tasks[0].name}-{batch_size}-{in_channels}-{out_channels}-{h}-{w}.log'
 
 
 def main():
-    task = workload()
-    log_file = f'{task.name}.log'
-    # collect_running_data(task, tuner_name='random', log_file=log_file, n_trial=100)
+    task, task_name = conv2d_task(batch_size=1, in_channels=64, h=32, w=32,
+                                  out_channels=64, kernel=(3, 3), padding=(1, 1), strides=(1, 1),
+                                  target='llvm')
+    log_file = f'{task_name}.log'
+    collect_running_data(task, tuner_name='random', log_file=log_file, n_trial=100)
     profiles = analyze_running_data(log_file)
     # print(profiles)
     results = sensitivity(profiles)
