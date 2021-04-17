@@ -11,7 +11,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-command', type=str, choices=['collect', 'analyze'], default='analyze')
-parser.add_argument('-task_type', type=str, choices=['conv2d', 'dense'], default='dense')
+parser.add_argument('-task_type', type=str, choices=['conv2d', 'dense', 'bmm'], default='dense')
 parser.add_argument('-args', type=str, default='1-8-8')
 parser.add_argument('-target', type=str, choices=['llvm', 'cuda'], default='llvm')
 parser.add_argument('-n_trial', type=int, default=1000)
@@ -20,19 +20,29 @@ parser.add_argument('-log_file', type=str, default='')
 args = parser.parse_args()
 
 
-def collect_running_data(task: autotvm.task.Task, tuner_name, log_file, n_trial=-1):
+def collect_running_data(task: autotvm.task.Task, log_file, n_trial=-1):
     n_total = len(task.config_space)
     if n_trial == -1:
         n_trial = n_total
-    if n_trial > n_total:
+    if n_trial >= n_total:
         n_trial = n_total
-    print(f'Task name: {task.name}')
-    print(f'Args: {task.args}')
-    print(f'Target: {task.target}')
-    print(f'Num of trials: {n_trial} / {n_total} ({n_trial / n_total * 100:.2f}%)')
-    print(f'Log file: {log_file}')
-    print('Schedule space:')
-    print(task.config_space)
+        tuner_name = 'grid_search'
+    else:
+        tuner_name = 'random'
+
+    summary = [
+        f'Task name: {task.name}',
+        f'Args: {task.args}',
+        f'Target: {task.target}',
+        f'Tuner name: {tuner_name}',
+        f'Num of trials: {n_trial} / {n_total} ({n_trial / n_total * 100:.2f}%)',
+        f'Log file: {log_file}',
+        f'Schedule space:',
+        str(task.config_space)
+    ]
+    with open(f'{log_file}.meta', 'w') as f:
+        f.write("\n".join(summary))
+    print("\n".join(summary))
 
     # get tuner
     if tuner_name == 'grid_search':
@@ -178,6 +188,14 @@ def dense_task(batch_size, in_channels, out_channels, target):
     return task
 
 
+def batch_matmul(batch_size, n, m, k, target):
+    x = relay.var('x', shape=(batch_size, n, k))
+    y = relay.var('y', shape=(batch_size, m, k))
+    out = relay.nn.batch_matmul(x, y)
+    task = task_from_relay(out, target, "nn.batch_matmul")
+    return task
+
+
 def collect_command():
     if args.task_type == 'conv2d':
         bs, ic, h, w, oc, kx, ky, px, py, sx, sy, g = [int(v) for v in args.args.split('-')]
@@ -187,10 +205,13 @@ def collect_command():
     elif args.task_type == 'dense':
         bs, ic, oc = [int(v) for v in args.args.split('-')]
         task = dense_task(batch_size=bs, in_channels=ic, out_channels=oc, target=args.target)
+    elif args.task_type == 'bmm':
+        bs, n, m, k = [int(v) for v in args.args.split('-')]
+        task = batch_matmul(batch_size=bs, n=n, m=m, k=k, target=args.target)
     else:
         raise ValueError("")
     log_file = args.log_file if len(args.log_file) > 0 else f'{args.task_type}-{args.args}-{args.target}.log'
-    collect_running_data(task, tuner_name='random', log_file=log_file, n_trial=args.n_trial)
+    collect_running_data(task, log_file=log_file, n_trial=args.n_trial)
 
 
 def analyze_command():
@@ -205,7 +226,7 @@ if __name__ == '__main__':
         collect_command()
     elif args.command == 'analyze':
         # args.log_file = 'conv2d_nchw.cuda-8-64-32-32-64-3-3-1-1-1-1-cuda.log'
-        args.log_file = 'dense_small_batch.cuda-1-512-512-cuda.log'
+        # args.log_file = 'dense_small_batch.cuda-1-512-512-cuda.log'
         analyze_command()
     else:
         raise ValueError("")
