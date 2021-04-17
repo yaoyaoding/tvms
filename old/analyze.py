@@ -20,14 +20,15 @@ def analyze_task():
         for name, subspace in task.config_space.space_map.items():
             products[name] = len(subspace)
         # manual define the depths currently. Add automatic analyze in the future
-        depths = OrderedDict()
-        depths['tile_f'] = [0, 3, 6, 9]
-        depths['tile_y'] = [1, 4, 7, 10]
-        depths['tile_x'] = [2, 5, 8, 11]
-        depths['tile_rc'] = [12, 15, 18]
-        depths['tile_ry'] = [13, 16, 19]
-        depths['tile_rx'] = [14, 17, 20]
-        return depths, products
+        # depths = OrderedDict()
+        # depths['tile_f'] = [0, 3, 6, 9]
+        # depths['tile_y'] = [1, 4, 7, 10]
+        # depths['tile_x'] = [2, 5, 8, 11]
+        # depths['tile_rc'] = [12, 15, 18]
+        # depths['tile_ry'] = [13, 16, 19]
+        # depths['tile_rx'] = [14, 17, 20]
+        # return depths, products
+        return products
 
 def load_profiles(products):
     print("load_profiles")
@@ -90,12 +91,13 @@ def sensitivity(profiles):
 
 
 def main():
-    depths, products = analyze_task()
+    # depths, products = analyze_task()
+    products = analyze_task()
     print(products)
-    print(depths)
     profiles = load_profiles(products)
     print("hi")
     sensitivity(profiles)
+
 
 if __name__ == '__main__':
     main()
