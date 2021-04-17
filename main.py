@@ -13,6 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('-task_type', type=str, choices=['conv2d', 'dense'], default='dense')
 parser.add_argument('-args', type=str, default='1-8-8')
 parser.add_argument('-target', type=str, choices=['llvm', 'cuda'], default='llvm')
+parser.add_argument('-n_trial', type=int, default=1000)
 args = parser.parse_args()
 
 
@@ -25,7 +26,7 @@ def collect_running_data(task: autotvm.task.Task, tuner_name, log_file, n_trial=
     print(f'Task name: {task.name}')
     print(f'Args: {task.args}')
     print(f'Target: {task.target}')
-    print(f'Num of trials: {n_trial} / {n_total} ({n_trial / n_total:.2f}%)')
+    print(f'Num of trials: {n_trial} / {n_total} ({n_trial / n_total * 100:.2f}%)')
     print(f'Log file: {log_file}')
     print('Schedule space:')
     print(task.config_space)
@@ -188,7 +189,7 @@ def get_task():
 def main():
     task = get_task()
     log_file = f'{task.name}-{args.args}-{args.target}.log'
-    collect_running_data(task, tuner_name='random', log_file=log_file, n_trial=100)
+    collect_running_data(task, tuner_name='random', log_file=log_file, n_trial=args.n_trial)
     profiles = analyze_running_data(log_file)
     # print(profiles)
     results = sensitivity(profiles)
