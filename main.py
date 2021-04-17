@@ -7,11 +7,20 @@ from tvm.autotvm.task.space import SplitEntity, ConfigEntity, ReorderEntity, Oth
 import statistics
 from pprint import pprint
 import tvm
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-task_type', type=str, choices=['conv2d', 'dense'], default='dense')
+parser.add_argument('-args', type=str, default='1-8-8')
+parser.add_argument('-target', type=str, choices=['llvm', 'cuda'], default='llvm')
+args = parser.parse_args()
 
 
 def collect_running_data(task: autotvm.task.Task, tuner_name, log_file, n_trial=-1):
     n_total = len(task.config_space)
     if n_trial == -1:
+        n_trial = n_total
+    if n_trial > n_total:
         n_trial = n_total
     print(f'Task name: {task.name}')
     print(f'Args: {task.args}')
@@ -124,10 +133,7 @@ def sensitivity(profiles):
     return {name: s for name, s in zip(subspace_names, sensitivities)}
 
 
-def conv2d_task(batch_size, in_channels, h, w, out_channels, kernel, padding, strides, target):
-    x = relay.var('input', shape=(batch_size, in_channels, h, w))
-    w = relay.var('w', shape=(out_channels, in_channels, kernel[0], kernel[1]))
-    x = relay.nn.conv2d(x, w, padding=padding, strides=strides)
+def task_from_relay(x, target, op_name):
     f = relay.Function(relay.analysis.free_vars(x), x)
     mod = tvm.IRModule.from_expr(f)
     mod = relay.transform.InferType()(mod)
@@ -145,16 +151,43 @@ def conv2d_task(batch_size, in_channels, h, w, out_channels, kernel, padding, st
         init_value = np.zeros(v.concrete_shape).astype(v.dtype)
         params[k] = tvm.nd.array(init_value, ctx=ctx)
     tasks = autotvm.task.extract_from_program(
-        mod["main"], target=target, params=params, ops=(relay.op.get("nn.conv2d"),)
+        mod["main"], target=target, params=params, ops=(relay.op.get(op_name),)
     )
-    return tasks[0], f'{tasks[0].name}-{batch_size}-{in_channels}-{out_channels}-{h}-{w}.log'
+    return tasks[0]
+
+
+def conv2d_task(batch_size, in_channels, h, w, out_channels, kernel, padding, strides, target):
+    x = relay.var('input', shape=(batch_size, in_channels, h, w))
+    w = relay.var('w', shape=(out_channels, in_channels, kernel[0], kernel[1]))
+    x = relay.nn.conv2d(x, w, padding=padding, strides=strides)
+    task = task_from_relay(x, target, "nn.conv2d")
+    return task
+
+
+def dense_task(batch_size, in_channels, out_channels, target):
+    x = relay.var('input', shape=(batch_size, in_channels))
+    w = relay.var('w', shape=(out_channels, in_channels))
+    x = relay.nn.dense(x, w)
+    task = task_from_relay(x, target, "nn.dense")
+    return task
+
+
+def get_task():
+    if args.task_type == 'conv2d':
+        bs, ic, h, w, oc, kx, ky, px, py, sx, sy = [int(v) for v in args.args.split('-')]
+        return conv2d_task(batch_size=bs, in_channels=ic, h=h, w=w,
+                           out_channels=oc, kernel=(kx, ky), padding=(px, py), strides=(sx, sy),
+                           target=args.target)
+    elif args.task_type == 'dense':
+        bs, ic, oc = [int(v) for v in args.args.split('-')]
+        return dense_task(batch_size=bs, in_channels=ic, out_channels=oc, target=args.target)
+    else:
+        raise ValueError("")
 
 
 def main():
-    task, task_name = conv2d_task(batch_size=1, in_channels=64, h=32, w=32,
-                                  out_channels=64, kernel=(3, 3), padding=(1, 1), strides=(1, 1),
-                                  target='llvm')
-    log_file = f'{task_name}.log'
+    task = get_task()
+    log_file = f'{task.name}-{args.args}-{args.target}.log'
     collect_running_data(task, tuner_name='random', log_file=log_file, n_trial=100)
     profiles = analyze_running_data(log_file)
     # print(profiles)
