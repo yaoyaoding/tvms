@@ -1,2 +1,2 @@
 # tvms
-ECE1755 Course Project
+Course Project
