@@ -9,8 +9,10 @@ from pprint import pprint
 import tvm
 import argparse
 
+import old.main_tvm_gpu_conv
+
 parser = argparse.ArgumentParser()
-parser.add_argument('-command', type=str, choices=['collect', 'analyze'], default='analyze')
+parser.add_argument('-command', type=str, choices=['collect', 'analyze'], required=True)
 parser.add_argument('-task_type', type=str, choices=['conv2d', 'dense', 'bmm'], default='dense')
 parser.add_argument('-args', type=str, default='1-8-8')
 parser.add_argument('-target', type=str, choices=['llvm', 'cuda'], default='llvm')
@@ -81,6 +83,7 @@ def collect_running_data(task: autotvm.task.Task, log_file, n_trial=-1):
 
 
 def analyze_running_data(log_file):
+    task = None
     profiles = []
     for i, record in enumerate(autotvm.record.load_from_file(log_file)):
         measure_input, measure_result = record
@@ -107,7 +110,7 @@ def analyze_running_data(log_file):
             else:
                 raise ValueError("")
         profiles.append([cfg, costs])
-    return profiles
+    return task, profiles
 
 
 def tuplize(x):
@@ -144,9 +147,24 @@ def sensitivity(profiles):
     for i in range(n):
         varanences = []
         for msch, latencies in collections[i].items():
-            varanences.append(statistics.pstdev(latencies) / min_latency * 100)
+            varanences.append(statistics.pstdev(latencies) / min_latency)
+            # varanences.append((max(latencies) - min(latencies)) / min_latency)
+            # varanences.append((max(latencies) - min(latencies)) / min_latency)
         sensitivities.append(statistics.mean(varanences))
     return {name: s for name, s in zip(subspace_names, sensitivities)}
+
+
+def schedule_latency_lines(profiles):  # profiles: List[Tuple[Dict[name, value], Latency]]
+    subspace_names = list(profiles[0][0].keys())
+    columns = subspace_names + ['latency']
+    lines = []
+    for subspaces, latency in profiles:
+        line = []
+        for name in subspace_names:
+            line.append(subspaces[name])
+        line.append(latency)
+        lines.append(line)
+    return columns, lines
 
 
 def task_from_relay(x, target, op_name):
@@ -215,18 +233,40 @@ def collect_command():
 
 
 def analyze_command():
-    log_file = args.log_file
+    log_file: str = args.log_file
     profiles = analyze_running_data(log_file)
-    results = sensitivity(profiles)
-    pprint(results)
+
+    prefix = log_file
+    if prefix.endswith('.log'):
+        prefix = prefix[:-4]
+
+    with open(f'{prefix}.summary', 'w'):
+        summary = [
+            f'Task name: {task.name}',
+            f'Args: {task.args}',
+            f'Target: {task.target}',
+            f'Tuner name: {tuner_name}',
+            f'Num of trials: {n_trial} / {n_total} ({n_trial / n_total * 100:.2f}%)',
+            f'Log file: {log_file}',
+            f'Schedule space:',
+            str(task.config_space)
+        ]
+        pass
+
+    with open(f'{args.log_file}.sensitivity', 'w'):
+        results = sensitivity(profiles)
+        name_length = max(len(name) for name in results.keys())
+        for name, value in results.items():
+            print(f'{name:>{name_length}}: {value:.3f}')
+
+    head, lines = schedule_latency_lines(profiles)
+
 
 
 if __name__ == '__main__':
     if args.command == 'collect':
         collect_command()
     elif args.command == 'analyze':
-        # args.log_file = 'conv2d_nchw.cuda-8-64-32-32-64-3-3-1-1-1-1-cuda.log'
-        # args.log_file = 'dense_small_batch.cuda-1-512-512-cuda.log'
         analyze_command()
     else:
         raise ValueError("")
